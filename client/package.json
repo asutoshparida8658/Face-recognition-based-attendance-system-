@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@tailwindcss/forms": "^0.5.6",
+    "@tailwindcss/forms": "^0.5.6", 
     "axios": "^1.5.1",
     "date-fns": "^2.30.0",
     "face-api.js": "^0.22.2",
@@ -23,13 +23,13 @@
     "@types/react": "^18.2.24",
     "@types/react-dom": "^18.2.8",
     "@vitejs/plugin-react": "^4.1.0",
-    "autoprefixer": "^10.4.16",
+    "autoprefixer": "^10.4.21",
     "eslint": "^8.50.0",
     "eslint-plugin-react": "^7.33.2",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.3",
-    "postcss": "^8.4.31",
-    "tailwindcss": "^3.3.3",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
     "vite": "^4.4.11"
   }
 }
