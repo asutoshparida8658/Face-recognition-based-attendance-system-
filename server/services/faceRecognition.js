@@ -38,7 +38,8 @@ async function loadModels() {
 // Get face descriptor from image
 async function getFaceDescriptorFromImage(imagePath) {
   try {
-    const img = await canvas.loadImage(imagePath);
+    // Fixed: Use the imported Canvas/Image instead of undefined canvas
+    const img = await Image.loadImage(imagePath);
     const detections = await faceapi.detectSingleFace(img)
       .withFaceLandmarks()
       .withFaceDescriptor();
@@ -78,7 +79,8 @@ async function registerFace(studentData, imagePath) {
 // Recognize a face from existing students
 async function recognizeFace(imagePath) {
   try {
-    const img = await canvas.loadImage(imagePath);
+    // Fixed: Use the imported Canvas/Image instead of undefined canvas
+    const img = await Image.loadImage(imagePath);
     const detections = await faceapi.detectSingleFace(img)
       .withFaceLandmarks()
       .withFaceDescriptor();
@@ -126,5 +128,6 @@ async function recognizeFace(imagePath) {
 module.exports = {
   loadModels,
   registerFace,
-  recognizeFace
+  recognizeFace,
+  getFaceDescriptorFromImage
 };
