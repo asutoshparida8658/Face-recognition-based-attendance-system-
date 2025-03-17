@@ -2,12 +2,12 @@
 const path = require('path');
 const fs = require('fs');
 const Student = require('../models/Student');
-const faceRecognition = require('../services/faceRecognition');
+const faceService = require('../services/faceRecognitionIntegration');
 
 // Get all students
 exports.getAllStudents = async (req, res) => {
   try {
-    const students = await Student.find().select('-faceDescriptor');
+    const students = await Student.find();
     res.json(students);
   } catch (error) {
     console.error('Error getting students:', error);
@@ -18,7 +18,7 @@ exports.getAllStudents = async (req, res) => {
 // Get student by ID
 exports.getStudentById = async (req, res) => {
   try {
-    const student = await Student.findById(req.params.id).select('-faceDescriptor');
+    const student = await Student.findById(req.params.id);
     
     if (!student) {
       return res.status(404).json({ message: 'Student not found' });
@@ -31,7 +31,7 @@ exports.getStudentById = async (req, res) => {
   }
 };
 
-// Register a new student with face (with fallback)
+// Register a new student with face recognition
 exports.registerStudent = async (req, res) => {
   try {
     if (!req.file) {
@@ -55,15 +55,21 @@ exports.registerStudent = async (req, res) => {
       return res.status(400).json({ message: 'Registration number already exists' });
     }
     
+    // Create student in MongoDB first
+    const student = new Student({
+      name,
+      registrationNumber,
+      faceImage: req.file.path
+    });
+    
+    await student.save();
+    
     try {
-      // Try to register with face recognition first
-      const student = await faceRecognition.registerFace(
-        { name, registrationNumber },
-        req.file.path
-      );
+      // Register face with the Python service
+      await faceService.registerFace(student, req.file.path);
       
       res.status(201).json({
-        message: 'Student registered successfully',
+        message: 'Student registered successfully with face recognition',
         student: {
           _id: student._id,
           name: student.name,
@@ -73,91 +79,21 @@ exports.registerStudent = async (req, res) => {
         }
       });
     } catch (faceError) {
-      console.error('Face recognition failed, falling back to simple registration:', faceError);
+      console.error('Face registration error:', faceError);
       
-      // Face recognition failed, use simple registration instead
-      const student = new Student({
-        name,
-        registrationNumber,
-        faceImage: req.file.path,
-        // Use a placeholder for face descriptor since it's required by the model
-        faceDescriptor: new Array(128).fill(0)
-      });
-      
-      await student.save();
-      
+      // We've already saved the student in MongoDB, so return success with a warning
       res.status(201).json({
-        message: 'Student registered successfully (without face recognition)',
+        message: 'Student registered successfully, but face recognition processing failed. The student can still be identified manually.',
         student: {
           _id: student._id,
           name: student.name,
           registrationNumber: student.registrationNumber,
           faceImage: student.faceImage,
           createdAt: student.createdAt
-        }
+        },
+        warning: faceError.message
       });
     }
-  } catch (error) {
-    console.error('Error registering student:', error);
-    
-    // Remove uploaded file if registration fails
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-    
-    res.status(500).json({ message: error.message || 'Server error' });
-  }
-};
-
-// Simple student registration (without face recognition)
-exports.registerStudentSimple = async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ message: 'Student photo is required' });
-    }
-    
-    const { name, registrationNumber } = req.body;
-    
-    if (!name || !registrationNumber) {
-      // Remove uploaded file if validation fails
-      if (fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
-      return res.status(400).json({ message: 'Name and registration number are required' });
-    }
-    
-    // Check if registration number already exists
-    const existingStudent = await Student.findOne({ registrationNumber });
-    
-    if (existingStudent) {
-      // Remove uploaded file if student already exists
-      if (fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
-      return res.status(400).json({ message: 'Registration number already exists' });
-    }
-    
-    // Create student without face recognition
-    const student = new Student({
-      name,
-      registrationNumber,
-      faceImage: req.file.path,
-      // Use a placeholder for face descriptor since it's required by the model
-      faceDescriptor: new Array(128).fill(0) // Typically face descriptors are 128-length float arrays
-    });
-    
-    await student.save();
-    
-    res.status(201).json({
-      message: 'Student registered successfully',
-      student: {
-        _id: student._id,
-        name: student.name,
-        registrationNumber: student.registrationNumber,
-        faceImage: student.faceImage,
-        createdAt: student.createdAt
-      }
-    });
   } catch (error) {
     console.error('Error registering student:', error);
     
@@ -175,7 +111,7 @@ exports.updateStudent = async (req, res) => {
   try {
     const { name, registrationNumber } = req.body;
     
-    if (!name && !registrationNumber) {
+    if (!name && !registrationNumber && !req.file) {
       return res.status(400).json({ message: 'At least one field to update is required' });
     }
     
@@ -190,7 +126,7 @@ exports.updateStudent = async (req, res) => {
     if (registrationNumber && registrationNumber !== student.registrationNumber) {
       const existingStudent = await Student.findOne({ registrationNumber });
       
-      if (existingStudent) {
+      if (existingStudent && existingStudent._id.toString() !== req.params.id) {
         return res.status(400).json({ message: 'Registration number already exists' });
       }
     }
@@ -199,23 +135,33 @@ exports.updateStudent = async (req, res) => {
     student.name = name || student.name;
     student.registrationNumber = registrationNumber || student.registrationNumber;
     
-    // If face image is provided, update face descriptor
+    // If face image is provided, update it
     if (req.file) {
-      // Remove old face image
-      if (fs.existsSync(student.faceImage)) {
-        fs.unlinkSync(student.faceImage);
-      }
+      // Store the old image path
+      const oldImagePath = student.faceImage;
       
-      // Update face image without trying to get face descriptor
+      // Update face image path
       student.faceImage = req.file.path;
       
-      // Keep the existing face descriptor or use a placeholder if needed
-      if (!student.faceDescriptor || student.faceDescriptor.length === 0) {
-        student.faceDescriptor = new Array(128).fill(0);
+      // Save the updated student
+      await student.save();
+      
+      try {
+        // Try to update face data in the Python service
+        await faceService.registerFace(student, req.file.path);
+        
+        // Remove old face image if successful
+        if (oldImagePath && fs.existsSync(oldImagePath)) {
+          fs.unlinkSync(oldImagePath);
+        }
+      } catch (faceError) {
+        console.error('Error updating face data:', faceError);
+        // Continue without updating face data
       }
+    } else {
+      // Save the updated student without changing the face image
+      await student.save();
     }
-    
-    await student.save();
     
     res.json({
       message: 'Student updated successfully',
@@ -248,12 +194,21 @@ exports.deleteStudent = async (req, res) => {
       return res.status(404).json({ message: 'Student not found' });
     }
     
-    // Remove face image
-    if (fs.existsSync(student.faceImage)) {
-      fs.unlinkSync(student.faceImage);
+    // Delete from MongoDB first
+    await Student.findByIdAndDelete(req.params.id);
+    
+    // Try to delete from face recognition service
+    try {
+      await faceService.deleteFaceData(student._id.toString());
+    } catch (faceError) {
+      console.error('Error deleting face data:', faceError);
+      // Continue even if face service deletion fails
     }
     
-    await student.remove();
+    // Try to remove the image file
+    if (student.faceImage && fs.existsSync(student.faceImage)) {
+      fs.unlinkSync(student.faceImage);
+    }
     
     res.json({ message: 'Student deleted successfully' });
   } catch (error) {

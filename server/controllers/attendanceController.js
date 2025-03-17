@@ -3,23 +3,41 @@ const path = require('path');
 const fs = require('fs');
 const Student = require('../models/Student');
 const Attendance = require('../models/Attendance');
-const faceRecognition = require('../services/faceRecognition');
+const faceService = require('../services/faceRecognitionIntegration');
 
-// Mark attendance via face recognition (with fallback)
+// Mark attendance via face recognition
 exports.markAttendance = async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'Face image is required' });
     }
     
+    console.log(`Starting face recognition with file: ${req.file.path}`);
+    
+    // Check if Python face recognition service is available
+    const isServiceAvailable = await faceService.isServiceAvailable().catch(err => {
+      console.error('Error checking face recognition service:', err);
+      return false;
+    });
+    
+    if (!isServiceAvailable) {
+      console.error('Face recognition service is not available');
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res.status(503).json({ 
+        message: 'Face recognition service is unavailable. Please try again later or contact the administrator.',
+        error: 'SERVICE_UNAVAILABLE'
+      });
+    }
+    
     // Get today's date with time set to 00:00:00
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    // Try to use face recognition but be prepared for failure
+    // Try to recognize the face
     try {
-      // Recognize face
-      const recognition = await faceRecognition.recognizeFace(req.file.path);
+      const recognition = await faceService.recognizeFace(req.file.path);
       
       // Remove uploaded file after recognition
       if (fs.existsSync(req.file.path)) {
@@ -33,9 +51,21 @@ exports.markAttendance = async (req, res) => {
         });
       }
       
+      console.log(`Face recognized with confidence: ${recognition.confidence}, student ID: ${recognition.student._id}`);
+      
+      // Get full student details from MongoDB
+      const student = await Student.findById(recognition.student._id);
+      
+      if (!student) {
+        return res.status(404).json({ 
+          message: 'Student record not found in database.',
+          error: 'STUDENT_NOT_FOUND'
+        });
+      }
+      
       // Check if attendance already marked for today
       const existingAttendance = await Attendance.findOne({
-        student: recognition.student._id,
+        student: student._id,
         date: {
           $gte: today,
           $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
@@ -43,12 +73,19 @@ exports.markAttendance = async (req, res) => {
       });
       
       if (existingAttendance) {
-        return res.status(400).json({ message: 'Attendance already marked for today' });
+        return res.status(400).json({ 
+          message: 'Attendance already marked for today',
+          student: {
+            _id: student._id,
+            name: student.name,
+            registrationNumber: student.registrationNumber
+          }
+        });
       }
       
       // Mark attendance
       const attendance = new Attendance({
-        student: recognition.student._id,
+        student: student._id,
         date: new Date(),
         status: 'present',
         verificationMethod: 'face'
@@ -59,15 +96,16 @@ exports.markAttendance = async (req, res) => {
       res.status(201).json({
         message: 'Attendance marked successfully',
         student: {
-          _id: recognition.student._id,
-          name: recognition.student.name,
-          registrationNumber: recognition.student.registrationNumber
+          _id: student._id,
+          name: student.name,
+          registrationNumber: student.registrationNumber
         },
         attendance: {
           _id: attendance._id,
           date: attendance.date,
           status: attendance.status
-        }
+        },
+        confidence: recognition.confidence
       });
     } catch (faceError) {
       console.error('Error using face recognition:', faceError);
@@ -78,9 +116,9 @@ exports.markAttendance = async (req, res) => {
       }
       
       // Return a meaningful error for the client
-      return res.status(400).json({ 
-        message: 'Face recognition service is currently unavailable. Please use manual attendance option.',
-        error: 'FACE_RECOGNITION_UNAVAILABLE'
+      return res.status(500).json({ 
+        message: 'Face recognition service error: ' + (faceError.message || 'Unknown error'),
+        error: 'FACE_RECOGNITION_ERROR'
       });
     }
   } catch (error) {
@@ -94,7 +132,6 @@ exports.markAttendance = async (req, res) => {
     res.status(500).json({ message: error.message || 'Server error' });
   }
 };
-
 // Mark attendance manually (for admin or as fallback)
 exports.markAttendanceManually = async (req, res) => {
   try {
