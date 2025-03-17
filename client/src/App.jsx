@@ -12,6 +12,8 @@ const Register = lazy(() => import('./pages/Register'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const StudentRegistration = lazy(() => import('./pages/StudentRegistration'));
 const StudentsList = lazy(() => import('./pages/StudentsList'));
+const StudentEdit = lazy(() => import('./pages/StudentEdit'));
+const StudentAttendance = lazy(() => import('./pages/StudentAttendance'));
 const AttendanceCaptureSystem = lazy(() => import('./pages/AttendanceCaptureSystem'));
 const AttendanceReports = lazy(() => import('./pages/AttendanceReports'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
@@ -42,6 +44,18 @@ function App() {
           <Route path="/students" element={
             <PrivateRoute>
               <StudentsList />
+            </PrivateRoute>
+          } />
+          
+          <Route path="/students/edit/:studentId" element={
+            <PrivateRoute>
+              <StudentEdit />
+            </PrivateRoute>
+          } />
+          
+          <Route path="/attendance/student/:studentId" element={
+            <PrivateRoute>
+              <StudentAttendance />
             </PrivateRoute>
           } />
           

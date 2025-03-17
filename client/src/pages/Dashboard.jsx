@@ -10,6 +10,8 @@ const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [recentAttendance, setRecentAttendance] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [attendanceCount, setAttendanceCount] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
   
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -33,7 +35,23 @@ const Dashboard = () => {
     };
     
     fetchDashboardData();
-  }, []);
+    
+    // Set up automatic refresh every 30 seconds
+    const refreshInterval = setInterval(() => {
+      const today = new Date().toISOString().split('T')[0];
+      api.get(`/api/attendance/date/${today}`)
+        .then(response => {
+          setRecentAttendance(response.data);
+          console.log('Dashboard data refreshed');
+        })
+        .catch(error => {
+          console.error('Error refreshing attendance data:', error);
+        });
+    }, 30000);
+    
+    // Clean up on unmount
+    return () => clearInterval(refreshInterval);
+  }, [refreshKey]);
   
   // Calculate dashboard summary
   const calculateSummary = () => {
@@ -71,7 +89,36 @@ const Dashboard = () => {
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
+        <div className="flex items-center">
+          <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
+          <button 
+            onClick={() => {
+              setIsLoading(true);
+              setRefreshKey(prev => prev + 1);
+              const today = new Date().toISOString().split('T')[0];
+              
+              Promise.all([
+                api.get('/api/attendance/stats'),
+                api.get(`/api/attendance/date/${today}`)
+              ]).then(([statsRes, attendanceRes]) => {
+                setStats(statsRes.data);
+                setRecentAttendance(attendanceRes.data);
+                toast.success('Dashboard refreshed');
+              }).catch(error => {
+                console.error('Error refreshing data:', error);
+                toast.error('Failed to refresh data');
+              }).finally(() => {
+                setIsLoading(false);
+              });
+            }}
+            className="ml-3 p-2 text-blue-600 hover:bg-blue-50 rounded-full"
+            title="Refresh dashboard"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
+        </div>
         
         <div className="flex space-x-4">
           <Link
@@ -277,6 +324,27 @@ const Dashboard = () => {
               </Link>
             </div>
           </div>
+          
+          {/* Admin Quick Link - Only if user is admin */}
+          {user && user.role === 'admin' && (
+            <div className="bg-white rounded-lg shadow p-6">
+              <Link
+                to="/admin"
+                className="flex items-center p-4 bg-indigo-50 rounded-lg hover:bg-indigo-100"
+              >
+                <div className="flex-shrink-0 bg-indigo-100 p-3 rounded-full">
+                  <svg className="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                  </svg>
+                </div>
+                <div className="ml-4">
+                  <h3 className="text-lg font-medium text-indigo-900">Admin Dashboard</h3>
+                  <p className="text-sm text-indigo-600">Access advanced management tools</p>
+                </div>
+              </Link>
+            </div>
+          )}
         </>
       )}
     </div>

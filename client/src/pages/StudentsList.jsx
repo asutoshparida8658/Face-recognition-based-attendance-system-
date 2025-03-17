@@ -218,18 +218,20 @@ const StudentsList = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <Link
-                          to={`/attendance/student/${student._id}`}
-                          className="text-blue-600 hover:text-blue-900 mr-4"
-                        >
-                          View Attendance
-                        </Link>
-                        <Link
-                          to={`/students/edit/${student._id}`}
-                          className="text-indigo-600 hover:text-indigo-900"
-                        >
-                          Edit
-                        </Link>
+                        <div className="flex justify-end space-x-2">
+                          <Link
+                            to={`/attendance/student/${student._id}`}
+                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                          >
+                            View Attendance
+                          </Link>
+                          <Link
+                            to={`/students/edit/${student._id}`}
+                            className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                          >
+                            Edit
+                          </Link>
+                        </div>
                       </td>
                     </tr>
                   ))
