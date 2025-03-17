@@ -1,3 +1,4 @@
+// server/middleware/auth.js
 const jwt = require('jsonwebtoken');
 const config = require('config');
 const User = require('../models/User');
@@ -44,4 +45,38 @@ auth.checkAdmin = (req, res, next) => {
   }
 };
 
+// Optional authentication middleware
+const optionalAuth = async (req, res, next) => {
+  // Get token from header
+  const token = req.header('x-auth-token');
+  
+  // If no token, continue without authentication
+  if (!token) {
+    return next();
+  }
+  
+  try {
+    // Verify token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || config.get('jwtSecret'));
+    
+    // Add user from payload
+    req.user = decoded.user;
+    
+    // Check if user exists in database
+    const user = await User.findById(req.user.id).select('-password');
+    
+    if (user) {
+      // Add full user object to request
+      req.userObj = user;
+    }
+    
+    next();
+  } catch (err) {
+    // Token is invalid, but we'll continue without authentication
+    console.warn('Invalid auth token provided, continuing without authentication');
+    next();
+  }
+};
+
 module.exports = auth;
+module.exports.optionalAuth = optionalAuth;

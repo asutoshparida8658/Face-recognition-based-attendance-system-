@@ -4,6 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const attendanceController = require('../controllers/attendanceController');
 const auth = require('../middleware/auth');
+const { optionalAuth } = require('../middleware/auth'); // Import the optional auth middleware
 
 // Set up multer for file uploads
 const storage = multer.diskStorage({
@@ -27,36 +28,38 @@ const upload = multer({
   }
 });
 
+// Face recognition attendance - keep as is
 router.post(
   '/mark',
   upload.single('faceImage'),
   attendanceController.markAttendance
 );
 
-router.use(auth);
-
-// Mark attendance manually (admin only)
+// Manual attendance - use optional auth to allow unauthenticated requests for our userland alternative
 router.post(
   '/mark-manual',
-  auth.checkAdmin,
+  optionalAuth, // Optional authentication
   attendanceController.markAttendanceManually
 );
 
-// Get attendance by date
+// Routes that still require regular auth
 router.get(
   '/date/:date',
+  auth,
   attendanceController.getAttendanceByDate
 );
 
 // Get attendance by student
 router.get(
   '/student/:studentId',
+  auth,
   attendanceController.getAttendanceByStudent
 );
 
 // Get attendance statistics
 router.get(
   '/stats',
+  auth,
   attendanceController.getAttendanceStats
 );
 

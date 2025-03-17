@@ -3,7 +3,7 @@ import * as faceapi from 'face-api.js';
 import api from '../../services/api';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { toast } from 'react-toastify';
-
+import {models} from "./../../../public/models";
 const FaceRecognitionCapture = ({ onSuccess }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -18,7 +18,7 @@ const FaceRecognitionCapture = ({ onSuccess }) => {
     const loadModels = async () => {
       try {
         // Specify model URL path
-        const MODEL_URL = '/models';
+        const MODEL_URL = {models};
         
         // Load models
         await Promise.all([

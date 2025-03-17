@@ -1,10 +1,11 @@
+// server/controllers/attendanceController.js
 const path = require('path');
 const fs = require('fs');
 const Student = require('../models/Student');
 const Attendance = require('../models/Attendance');
 const faceRecognition = require('../services/faceRecognition');
 
-// Mark attendance via face recognition
+// Mark attendance via face recognition (with fallback)
 exports.markAttendance = async (req, res) => {
   try {
     if (!req.file) {
@@ -15,52 +16,73 @@ exports.markAttendance = async (req, res) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    // Recognize face
-    const recognition = await faceRecognition.recognizeFace(req.file.path);
-    
-    // Remove uploaded file after recognition
-    fs.unlinkSync(req.file.path);
-    
-    if (!recognition) {
-      return res.status(404).json({ message: 'Face not recognized' });
-    }
-    
-    // Check if attendance already marked for today
-    const existingAttendance = await Attendance.findOne({
-      student: recognition.student._id,
-      date: {
-        $gte: today,
-        $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
+    // Try to use face recognition but be prepared for failure
+    try {
+      // Recognize face
+      const recognition = await faceRecognition.recognizeFace(req.file.path);
+      
+      // Remove uploaded file after recognition
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
       }
-    });
-    
-    if (existingAttendance) {
-      return res.status(400).json({ message: 'Attendance already marked for today' });
-    }
-    
-    // Mark attendance
-    const attendance = new Attendance({
-      student: recognition.student._id,
-      date: new Date(),
-      status: 'present',
-      verificationMethod: 'face'
-    });
-    
-    await attendance.save();
-    
-    res.status(201).json({
-      message: 'Attendance marked successfully',
-      student: {
-        _id: recognition.student._id,
-        name: recognition.student.name,
-        registrationNumber: recognition.student.registrationNumber
-      },
-      attendance: {
-        _id: attendance._id,
-        date: attendance.date,
-        status: attendance.status
+      
+      if (!recognition) {
+        return res.status(404).json({ 
+          message: 'Face not recognized. Please try again or use manual attendance.',
+          error: 'FACE_NOT_RECOGNIZED'
+        });
       }
-    });
+      
+      // Check if attendance already marked for today
+      const existingAttendance = await Attendance.findOne({
+        student: recognition.student._id,
+        date: {
+          $gte: today,
+          $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
+        }
+      });
+      
+      if (existingAttendance) {
+        return res.status(400).json({ message: 'Attendance already marked for today' });
+      }
+      
+      // Mark attendance
+      const attendance = new Attendance({
+        student: recognition.student._id,
+        date: new Date(),
+        status: 'present',
+        verificationMethod: 'face'
+      });
+      
+      await attendance.save();
+      
+      res.status(201).json({
+        message: 'Attendance marked successfully',
+        student: {
+          _id: recognition.student._id,
+          name: recognition.student.name,
+          registrationNumber: recognition.student.registrationNumber
+        },
+        attendance: {
+          _id: attendance._id,
+          date: attendance.date,
+          status: attendance.status
+        }
+      });
+    } catch (faceError) {
+      console.error('Error using face recognition:', faceError);
+      
+      // Remove uploaded file if it exists
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      
+      // Return a meaningful error for the client
+      return res.status(400).json({ 
+        message: 'Face recognition service is currently unavailable. Please use manual attendance option.',
+        error: 'FACE_RECOGNITION_UNAVAILABLE'
+      });
+    }
   } catch (error) {
     console.error('Error marking attendance:', error);
     
@@ -73,13 +95,13 @@ exports.markAttendance = async (req, res) => {
   }
 };
 
-// Mark attendance manually (for admin)
+// Mark attendance manually (for admin or as fallback)
 exports.markAttendanceManually = async (req, res) => {
   try {
     const { studentId, date, status } = req.body;
     
-    if (!studentId || !date) {
-      return res.status(400).json({ message: 'Student ID and date are required' });
+    if (!studentId) {
+      return res.status(400).json({ message: 'Student ID is required' });
     }
     
     // Check if student exists
@@ -90,7 +112,7 @@ exports.markAttendanceManually = async (req, res) => {
     }
     
     // Parse date and set time to 00:00:00
-    const attendanceDate = new Date(date);
+    const attendanceDate = date ? new Date(date) : new Date();
     attendanceDate.setHours(0, 0, 0, 0);
     
     // Check if attendance already marked for the date
@@ -106,7 +128,7 @@ exports.markAttendanceManually = async (req, res) => {
       // Update existing attendance
       existingAttendance.status = status || 'present';
       existingAttendance.verificationMethod = 'manual';
-      existingAttendance.verifiedBy = req.user.id;
+      existingAttendance.verifiedBy = req.user ? req.user.id : null;
       
       await existingAttendance.save();
       
@@ -122,7 +144,7 @@ exports.markAttendanceManually = async (req, res) => {
       date: attendanceDate,
       status: status || 'present',
       verificationMethod: 'manual',
-      verifiedBy: req.user.id
+      verifiedBy: req.user ? req.user.id : null
     });
     
     await attendance.save();

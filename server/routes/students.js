@@ -1,3 +1,4 @@
+// server/routes/students.js
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -36,7 +37,14 @@ router.get('/', studentController.getAllStudents);
 // Get student by ID
 router.get('/:id', studentController.getStudentById);
 
-// Register a new student with face
+// Register a new student without face recognition
+router.post(
+  '/register-simple',
+  upload.single('faceImage'),
+  studentController.registerStudentSimple
+);
+
+// Register a new student with face (with fallback to simple registration)
 router.post(
   '/register',
   upload.single('faceImage'),
