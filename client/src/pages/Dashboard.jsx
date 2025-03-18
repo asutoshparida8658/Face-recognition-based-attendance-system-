@@ -10,8 +10,9 @@ const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [recentAttendance, setRecentAttendance] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [attendanceCount, setAttendanceCount] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [timeSlots, setTimeSlots] = useState([]);
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState('all');
   
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -19,12 +20,33 @@ const Dashboard = () => {
         setIsLoading(true);
         
         // Fetch attendance statistics
-        const statsResponse = await api.get('/api/attendance/stats');
+        let statsUrl = '/api/attendance/stats';
+        if (selectedTimeSlot !== 'all') {
+          const [startTime, endTime] = selectedTimeSlot.split('-');
+          statsUrl += `?startTime=${startTime}&endTime=${endTime}`;
+        }
+        
+        const statsResponse = await api.get(statsUrl);
         setStats(statsResponse.data);
+        
+        // Extract time slots from statistics
+        const slots = new Set();
+        statsResponse.data.forEach(stat => {
+          if (stat.startTime && stat.endTime) {
+            slots.add(`${stat.startTime}-${stat.endTime}`);
+          }
+        });
+        setTimeSlots(Array.from(slots));
         
         // Fetch recent attendance records (today's records)
         const today = new Date().toISOString().split('T')[0];
-        const attendanceResponse = await api.get(`/api/attendance/date/${today}`);
+        let attendanceUrl = `/api/attendance/date/${today}`;
+        if (selectedTimeSlot !== 'all') {
+          const [startTime, endTime] = selectedTimeSlot.split('-');
+          attendanceUrl = `/api/attendance/timeslot?date=${today}&startTime=${startTime}&endTime=${endTime}`;
+        }
+        
+        const attendanceResponse = await api.get(attendanceUrl);
         setRecentAttendance(attendanceResponse.data);
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
@@ -39,7 +61,14 @@ const Dashboard = () => {
     // Set up automatic refresh every 30 seconds
     const refreshInterval = setInterval(() => {
       const today = new Date().toISOString().split('T')[0];
-      api.get(`/api/attendance/date/${today}`)
+      let url = `/api/attendance/date/${today}`;
+      
+      if (selectedTimeSlot !== 'all') {
+        const [startTime, endTime] = selectedTimeSlot.split('-');
+        url = `/api/attendance/timeslot?date=${today}&startTime=${startTime}&endTime=${endTime}`;
+      }
+      
+      api.get(url)
         .then(response => {
           setRecentAttendance(response.data);
           console.log('Dashboard data refreshed');
@@ -51,7 +80,7 @@ const Dashboard = () => {
     
     // Clean up on unmount
     return () => clearInterval(refreshInterval);
-  }, [refreshKey]);
+  }, [refreshKey, selectedTimeSlot]);
   
   // Calculate dashboard summary
   const calculateSummary = () => {
@@ -95,11 +124,20 @@ const Dashboard = () => {
             onClick={() => {
               setIsLoading(true);
               setRefreshKey(prev => prev + 1);
+              
               const today = new Date().toISOString().split('T')[0];
+              let statsUrl = '/api/attendance/stats';
+              let attendanceUrl = `/api/attendance/date/${today}`;
+              
+              if (selectedTimeSlot !== 'all') {
+                const [startTime, endTime] = selectedTimeSlot.split('-');
+                statsUrl += `?startTime=${startTime}&endTime=${endTime}`;
+                attendanceUrl = `/api/attendance/timeslot?date=${today}&startTime=${startTime}&endTime=${endTime}`;
+              }
               
               Promise.all([
-                api.get('/api/attendance/stats'),
-                api.get(`/api/attendance/date/${today}`)
+                api.get(statsUrl),
+                api.get(attendanceUrl)
               ]).then(([statsRes, attendanceRes]) => {
                 setStats(statsRes.data);
                 setRecentAttendance(attendanceRes.data);
@@ -121,6 +159,25 @@ const Dashboard = () => {
         </div>
         
         <div className="flex space-x-4">
+          <div>
+            <label htmlFor="time-slot-filter" className="block text-sm font-medium text-gray-700 mr-2">
+              Time Slot:
+            </label>
+            <select
+              id="time-slot-filter"
+              value={selectedTimeSlot}
+              onChange={(e) => setSelectedTimeSlot(e.target.value)}
+              className="border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">All Time Slots</option>
+              {timeSlots.map(slot => (
+                <option key={slot} value={slot}>
+                  {slot.replace('-', ' - ')}
+                </option>
+              ))}
+            </select>
+          </div>
+          
           <Link
             to="/attendance/capture"
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
@@ -173,6 +230,7 @@ const Dashboard = () => {
               <div className="mt-2">
                 <span className="text-gray-500 text-sm">
                   {new Date().toLocaleDateString()}
+                  {selectedTimeSlot !== 'all' && ` (${selectedTimeSlot.replace('-', ' - ')})`}
                 </span>
               </div>
             </div>
@@ -192,6 +250,9 @@ const Dashboard = () => {
           <div className="bg-white rounded-lg shadow overflow-hidden mb-8">
             <div className="px-6 py-4 border-b">
               <h2 className="text-xl font-semibold text-gray-800">Today's Attendance</h2>
+              {selectedTimeSlot !== 'all' && (
+                <p className="text-sm text-gray-500">Time Slot: {selectedTimeSlot.replace('-', ' - ')}</p>
+              )}
             </div>
             
             <div className="overflow-x-auto">
@@ -206,6 +267,9 @@ const Dashboard = () => {
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Time
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Time Slot
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Method
@@ -235,6 +299,13 @@ const Dashboard = () => {
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-500">
+                            {record.startTime && record.endTime 
+                              ? `${record.startTime} - ${record.endTime}` 
+                              : "Not specified"}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
                           <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
                             record.verificationMethod === 'face' 
                               ? 'bg-green-100 text-green-800' 
@@ -256,7 +327,7 @@ const Dashboard = () => {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="5" className="px-6 py-4 text-center text-sm text-gray-500">
+                      <td colSpan="6" className="px-6 py-4 text-center text-sm text-gray-500">
                         No attendance records for today.
                       </td>
                     </tr>

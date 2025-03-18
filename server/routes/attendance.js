@@ -63,4 +63,18 @@ router.get(
   attendanceController.getAttendanceStats
 );
 
+// New route: Get attendance by time slot
+router.get(
+  '/timeslot',
+  auth,
+  attendanceController.getAttendanceByTimeSlot
+);
+
+// New route: Export attendance to CSV
+router.get(
+  '/export-csv',
+  auth,
+  attendanceController.exportAttendanceCSV
+);
+
 module.exports = router;

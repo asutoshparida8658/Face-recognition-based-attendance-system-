@@ -9,8 +9,13 @@ const AttendanceReports = () => {
   const [students, setStudents] = useState([]);
   const [selectedStudent, setSelectedStudent] = useState('all');
   const [selectedMonth, setSelectedMonth] = useState('all');
+  const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [exportFormat, setExportFormat] = useState('csv');
+  const [timeSlots, setTimeSlots] = useState([]);
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState('all');
   
   // Fetch data
   useEffect(() => {
@@ -25,6 +30,15 @@ const AttendanceReports = () => {
         // Fetch students
         const studentsResponse = await api.get('/api/students');
         setStudents(studentsResponse.data);
+        
+        // Extract available time slots from attendance data
+        const slotsSet = new Set();
+        statsResponse.data.forEach(stat => {
+          if (stat.startTime && stat.endTime) {
+            slotsSet.add(`${stat.startTime}-${stat.endTime}`);
+          }
+        });
+        setTimeSlots(Array.from(slotsSet));
       } catch (error) {
         console.error('Error fetching report data:', error);
         toast.error('Failed to load report data');
@@ -52,6 +66,16 @@ const AttendanceReports = () => {
     if (selectedMonth !== 'all') {
       const statMonth = `${stat.year}-${stat.month}`;
       if (statMonth !== selectedMonth) {
+        return false;
+      }
+    }
+    
+    // Filter by time slot
+    if (selectedTimeSlot !== 'all') {
+      const statTimeSlot = stat.startTime && stat.endTime ? 
+        `${stat.startTime}-${stat.endTime}` : null;
+      
+      if (statTimeSlot !== selectedTimeSlot) {
         return false;
       }
     }
@@ -87,7 +111,7 @@ const AttendanceReports = () => {
   
   const summary = calculateSummary();
   
-  // Export attendance report
+  // Export attendance report using server-side endpoint
   const exportReport = () => {
     if (filteredStats.length === 0) {
       toast.warning('No data to export');
@@ -95,41 +119,23 @@ const AttendanceReports = () => {
     }
     
     try {
-      let content = '';
-      const fileName = `attendance-report-${selectedMonth !== 'all' ? selectedMonth : 'all'}-${new Date().getTime()}`;
+      // Build query parameters
+      const params = new URLSearchParams();
+      params.append('date', selectedDate);
       
-      if (exportFormat === 'csv') {
-        // CSV Header
-        content = 'Student Name,Registration Number,Month,Year,Present,Absent,Total,Attendance %\n';
-        
-        // CSV Data
-        filteredStats.forEach(stat => {
-          content += `"${stat.studentName}","${stat.registrationNumber}",${stat.month},${stat.year},${stat.present},${stat.absent},${stat.total},${stat.presentPercentage.toFixed(2)}\n`;
-        });
-        
-        // Create download link
-        const blob = new Blob([content], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${fileName}.csv`;
-        link.click();
-        URL.revokeObjectURL(url);
-      } else if (exportFormat === 'json') {
-        // JSON Data
-        content = JSON.stringify(filteredStats, null, 2);
-        
-        // Create download link
-        const blob = new Blob([content], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${fileName}.json`;
-        link.click();
-        URL.revokeObjectURL(url);
+      if (selectedTimeSlot !== 'all') {
+        const [start, end] = selectedTimeSlot.split('-');
+        params.append('startTime', start);
+        params.append('endTime', end);
+      } else if (startTime && endTime) {
+        params.append('startTime', startTime);
+        params.append('endTime', endTime);
       }
       
-      toast.success('Report exported successfully');
+      // Use the server-side export endpoint
+      window.open(`${api.defaults.baseURL}/api/attendance/export-csv?${params.toString()}`, '_blank');
+      
+      toast.success('Downloading attendance report...');
     } catch (error) {
       console.error('Error exporting report:', error);
       toast.error('Failed to export report');
@@ -148,7 +154,8 @@ const AttendanceReports = () => {
         <>
           {/* Filters */}
           <div className="bg-white p-6 rounded-lg shadow mb-8">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <h2 className="text-lg font-semibold mb-4">Report Filters</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
               <div>
                 <label htmlFor="student-filter" className="block text-sm font-medium text-gray-700 mb-1">
                   Filter by Student
@@ -192,30 +199,73 @@ const AttendanceReports = () => {
                 </select>
               </div>
               
-              <div className="flex items-end">
-                <div className="flex-grow mr-2">
-                  <label htmlFor="export-format" className="block text-sm font-medium text-gray-700 mb-1">
-                    Export Format
-                  </label>
-                  <select
-                    id="export-format"
-                    value={exportFormat}
-                    onChange={(e) => setExportFormat(e.target.value)}
-                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                  >
-                    <option value="csv">CSV</option>
-                    <option value="json">JSON</option>
-                  </select>
-                </div>
-                
-                <button
-                  onClick={exportReport}
-                  disabled={filteredStats.length === 0}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+              <div>
+                <label htmlFor="time-slot-filter" className="block text-sm font-medium text-gray-700 mb-1">
+                  Filter by Time Slot
+                </label>
+                <select
+                  id="time-slot-filter"
+                  value={selectedTimeSlot}
+                  onChange={(e) => setSelectedTimeSlot(e.target.value)}
+                  className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                 >
-                  Export
-                </button>
+                  <option value="all">All Time Slots</option>
+                  {timeSlots.map(slot => (
+                    <option key={slot} value={slot}>
+                      {slot.replace('-', ' - ')}
+                    </option>
+                  ))}
+                </select>
               </div>
+            </div>
+            
+            <div className="flex flex-col md:flex-row md:items-end gap-4">
+              <div className="md:flex-grow">
+                <label htmlFor="date-filter" className="block text-sm font-medium text-gray-700 mb-1">
+                  Specific Date (for Export)
+                </label>
+                <input
+                  type="date"
+                  id="date-filter"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                />
+              </div>
+              
+              <div className="md:flex-grow">
+                <label htmlFor="start-time" className="block text-sm font-medium text-gray-700 mb-1">
+                  Start Time (for Export)
+                </label>
+                <input
+                  type="time"
+                  id="start-time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                />
+              </div>
+              
+              <div className="md:flex-grow">
+                <label htmlFor="end-time" className="block text-sm font-medium text-gray-700 mb-1">
+                  End Time (for Export)
+                </label>
+                <input
+                  type="time"
+                  id="end-time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                />
+              </div>
+              
+              <button
+                onClick={exportReport}
+                disabled={filteredStats.length === 0}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+              >
+                Export Report
+              </button>
             </div>
           </div>
           
@@ -243,6 +293,9 @@ const AttendanceReports = () => {
           <div className="bg-white rounded-lg shadow overflow-hidden">
             <div className="px-6 py-4 border-b">
               <h2 className="text-xl font-semibold text-gray-800">Attendance Records</h2>
+              {selectedTimeSlot !== 'all' && (
+                <p className="text-sm text-gray-500">Time Slot: {selectedTimeSlot.replace('-', ' - ')}</p>
+              )}
             </div>
             
             <div className="overflow-x-auto">
@@ -262,13 +315,10 @@ const AttendanceReports = () => {
                       Year
                     </th>
                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Time Slot
+                    </th>
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Present
-                    </th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Absent
-                    </th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Total
                     </th>
                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Attendance %
@@ -300,18 +350,15 @@ const AttendanceReports = () => {
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-center">
-                          <div className="text-sm text-gray-900">
-                            {stat.present}
+                          <div className="text-sm text-gray-500">
+                            {stat.startTime && stat.endTime 
+                              ? `${stat.startTime} - ${stat.endTime}` 
+                              : "Not specified"}
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-center">
                           <div className="text-sm text-gray-900">
-                            {stat.absent}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center">
-                          <div className="text-sm text-gray-900">
-                            {stat.total}
+                            {stat.present} / {stat.total}
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-center">
@@ -343,7 +390,7 @@ const AttendanceReports = () => {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="8" className="px-6 py-4 text-center text-sm text-gray-500">
+                      <td colSpan="7" className="px-6 py-4 text-center text-sm text-gray-500">
                         No attendance records found.
                       </td>
                     </tr>

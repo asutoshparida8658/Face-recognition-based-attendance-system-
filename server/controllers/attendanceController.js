@@ -35,6 +35,10 @@ exports.markAttendance = async (req, res) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
+    // Extract time slot information from request
+    const startTime = req.body.startTime || null;
+    const endTime = req.body.endTime || null;
+    
     // Try to recognize the face
     try {
       const recognition = await faceService.recognizeFace(req.file.path);
@@ -73,6 +77,13 @@ exports.markAttendance = async (req, res) => {
       });
       
       if (existingAttendance) {
+        // Update time slot if provided and not already set
+        if ((startTime || endTime) && (!existingAttendance.startTime || !existingAttendance.endTime)) {
+          existingAttendance.startTime = startTime || existingAttendance.startTime;
+          existingAttendance.endTime = endTime || existingAttendance.endTime;
+          await existingAttendance.save();
+        }
+        
         return res.status(400).json({ 
           message: 'Attendance already marked for today',
           student: {
@@ -83,12 +94,14 @@ exports.markAttendance = async (req, res) => {
         });
       }
       
-      // Mark attendance
+      // Mark attendance with time slot
       const attendance = new Attendance({
         student: student._id,
         date: new Date(),
         status: 'present',
-        verificationMethod: 'face'
+        verificationMethod: 'face',
+        startTime,
+        endTime
       });
       
       await attendance.save();
@@ -103,7 +116,9 @@ exports.markAttendance = async (req, res) => {
         attendance: {
           _id: attendance._id,
           date: attendance.date,
-          status: attendance.status
+          status: attendance.status,
+          startTime: attendance.startTime,
+          endTime: attendance.endTime
         },
         confidence: recognition.confidence
       });
@@ -132,10 +147,11 @@ exports.markAttendance = async (req, res) => {
     res.status(500).json({ message: error.message || 'Server error' });
   }
 };
+
 // Mark attendance manually (for admin or as fallback)
 exports.markAttendanceManually = async (req, res) => {
   try {
-    const { studentId, date, status } = req.body;
+    const { studentId, date, status, startTime, endTime } = req.body;
     
     if (!studentId) {
       return res.status(400).json({ message: 'Student ID is required' });
@@ -167,6 +183,10 @@ exports.markAttendanceManually = async (req, res) => {
       existingAttendance.verificationMethod = 'manual';
       existingAttendance.verifiedBy = req.user ? req.user.id : null;
       
+      // Update time slot if provided
+      if (startTime) existingAttendance.startTime = startTime;
+      if (endTime) existingAttendance.endTime = endTime;
+      
       await existingAttendance.save();
       
       return res.json({
@@ -175,13 +195,15 @@ exports.markAttendanceManually = async (req, res) => {
       });
     }
     
-    // Mark new attendance
+    // Mark new attendance with time slot
     const attendance = new Attendance({
       student: studentId,
       date: attendanceDate,
       status: status || 'present',
       verificationMethod: 'manual',
-      verifiedBy: req.user ? req.user.id : null
+      verifiedBy: req.user ? req.user.id : null,
+      startTime,
+      endTime
     });
     
     await attendance.save();
@@ -251,10 +273,56 @@ exports.getAttendanceByStudent = async (req, res) => {
   }
 };
 
+// Get attendance by time slot
+exports.getAttendanceByTimeSlot = async (req, res) => {
+  try {
+    const { date, startTime, endTime } = req.query;
+    
+    if (!date) {
+      return res.status(400).json({ message: 'Date is required' });
+    }
+    
+    // Parse date and set time to 00:00:00
+    const attendanceDate = new Date(date);
+    attendanceDate.setHours(0, 0, 0, 0);
+    
+    // Build query object
+    const query = {
+      date: {
+        $gte: attendanceDate,
+        $lt: new Date(attendanceDate.getTime() + 24 * 60 * 60 * 1000)
+      }
+    };
+    
+    // Add time slot filtering if provided
+    if (startTime) {
+      query.startTime = startTime;
+    }
+    
+    if (endTime) {
+      query.endTime = endTime;
+    }
+    
+    // Get all attendance records matching the query
+    const attendance = await Attendance.find(query)
+      .populate('student', 'name registrationNumber')
+      .sort({ createdAt: -1 });
+    
+    res.json(attendance);
+  } catch (error) {
+    console.error('Error getting attendance by time slot:', error);
+    res.status(500).json({ message: error.message || 'Server error' });
+  }
+};
+
 // Get attendance statistics
 exports.getAttendanceStats = async (req, res) => {
   try {
-    const stats = await Attendance.aggregate([
+    // Extract time slot query parameters if provided
+    const { startTime, endTime } = req.query;
+    
+    // Start building the pipeline
+    const pipeline = [
       {
         $lookup: {
           from: 'students',
@@ -265,7 +333,33 @@ exports.getAttendanceStats = async (req, res) => {
       },
       {
         $unwind: '$studentInfo'
-      },
+      }
+    ];
+    
+    // Add time slot filter if provided
+    if (startTime && endTime) {
+      pipeline.push({
+        $match: {
+          startTime,
+          endTime
+        }
+      });
+    } else if (startTime) {
+      pipeline.push({
+        $match: {
+          startTime
+        }
+      });
+    } else if (endTime) {
+      pipeline.push({
+        $match: {
+          endTime
+        }
+      });
+    }
+    
+    // Continue with the rest of the pipeline
+    pipeline.push(
       {
         $group: {
           _id: {
@@ -285,7 +379,10 @@ exports.getAttendanceStats = async (req, res) => {
               $cond: [{ $eq: ['$status', 'absent'] }, 1, 0]
             }
           },
-          total: { $sum: 1 }
+          total: { $sum: 1 },
+          // Store the time slot information
+          startTime: { $first: '$startTime' },
+          endTime: { $first: '$endTime' }
         }
       },
       {
@@ -299,6 +396,8 @@ exports.getAttendanceStats = async (req, res) => {
           present: 1,
           absent: 1,
           total: 1,
+          startTime: 1,
+          endTime: 1,
           presentPercentage: {
             $multiply: [
               { $divide: ['$present', '$total'] },
@@ -314,11 +413,77 @@ exports.getAttendanceStats = async (req, res) => {
           studentName: 1
         }
       }
-    ]);
+    );
+    
+    const stats = await Attendance.aggregate(pipeline);
     
     res.json(stats);
   } catch (error) {
     console.error('Error getting attendance statistics:', error);
+    res.status(500).json({ message: error.message || 'Server error' });
+  }
+};
+
+// Export attendance data to CSV
+exports.exportAttendanceCSV = async (req, res) => {
+  try {
+    const { date, startTime, endTime } = req.query;
+    
+    if (!date) {
+      return res.status(400).json({ message: 'Date is required for export' });
+    }
+    
+    // Parse date and set time to 00:00:00
+    const attendanceDate = new Date(date);
+    attendanceDate.setHours(0, 0, 0, 0);
+    
+    // Build query object
+    const query = {
+      date: {
+        $gte: attendanceDate,
+        $lt: new Date(attendanceDate.getTime() + 24 * 60 * 60 * 1000)
+      }
+    };
+    
+    // Add time slot filtering if provided
+    if (startTime) {
+      query.startTime = startTime;
+    }
+    
+    if (endTime) {
+      query.endTime = endTime;
+    }
+    
+    // Get attendance records with student details
+    const attendance = await Attendance.find(query)
+      .populate('student', 'name registrationNumber')
+      .sort({ 'student.name': 1 });
+    
+    if (attendance.length === 0) {
+      return res.status(404).json({ message: 'No attendance records found for the specified criteria' });
+    }
+    
+    // Generate CSV header
+    let csv = 'Student Name,Registration Number,Date,Time,Status,Verification Method,Time Slot\n';
+    
+    // Add records to CSV
+    attendance.forEach(record => {
+      const recordDate = new Date(record.date).toLocaleDateString();
+      const recordTime = new Date(record.createdAt).toLocaleTimeString();
+      const timeSlot = record.startTime && record.endTime ? 
+        `${record.startTime}-${record.endTime}` : 'Not Specified';
+      
+      csv += `"${record.student.name}","${record.student.registrationNumber}","${recordDate}","${recordTime}","${record.status}","${record.verificationMethod}","${timeSlot}"\n`;
+    });
+    
+    // Set response headers for CSV download
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=attendance_${date}_${startTime || 'all'}_${endTime || 'all'}.csv`);
+    
+    // Send CSV data
+    res.send(csv);
+  } catch (error) {
+    console.error('Error exporting attendance to CSV:', error);
     res.status(500).json({ message: error.message || 'Server error' });
   }
 };

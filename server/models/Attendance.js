@@ -25,6 +25,14 @@ const AttendanceSchema = new mongoose.Schema({
     ref: 'User',
     default: null
   },
+  startTime: {
+    type: String,
+    default: null
+  },
+  endTime: {
+    type: String,
+    default: null
+  },
   createdAt: {
     type: Date,
     default: Date.now
